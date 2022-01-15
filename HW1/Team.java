@@ -1,5 +1,6 @@
 package HW1;
 
+
 public class Team {
     protected String name;
     protected MemberTeam[] members;

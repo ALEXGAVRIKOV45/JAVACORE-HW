@@ -1,5 +1,6 @@
 package HW1;
 
+
 public class MemberTeam {
     protected String name;
     protected int power;
