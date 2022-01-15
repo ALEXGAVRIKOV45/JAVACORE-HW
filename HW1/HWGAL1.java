@@ -15,6 +15,7 @@ import HW1.Team;
 
 class HWGAL1 {
 public static void main(String[]args) {
+
     //Создаем препятствия
     Obstacle ob1 = new Obstacle("Log");
     Obstacle ob2 = new Obstacle("Stairs");

@@ -1,6 +1,7 @@
 package HW1;
 import java.util.Random;
 
+
 public class Obstacle {
     protected String name;
     protected int difficulty;

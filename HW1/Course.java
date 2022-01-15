@@ -1,5 +1,6 @@
 package HW1;
 
+
 public class Course {
     protected String name;
     protected Obstacle[] obstacles;
