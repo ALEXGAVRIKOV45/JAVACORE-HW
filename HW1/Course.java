@@ -27,6 +27,7 @@ public class Course {
          for (int y=0; y < obstacles.length; y++) {
              if (team.members[i].getPower() > obstacles[y].difficulty){
                  succes++;
+
              }
             else{
                  team.members[i].setFinished(false);
