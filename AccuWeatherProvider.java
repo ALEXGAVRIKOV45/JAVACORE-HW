@@ -13,24 +13,30 @@ import okhttp3.Response;
 
 import java.io.IOException;
 
+import java.sql.SQLException;
 import java.util.List;
 
 public class AccuWeatherProvider implements WeatherProvider {
+
 	private static final String BASE_HOST = "dataservice.accuweather.com";
-	private static final String FORECAST_ENDPOINT = "forecasts";
-	private static final String FORECAST_TYPE = "daily";;
-	private static final String FORECAST_PERIOD = "5day";
 	private static final String CURRENT_CONDITIONS_ENDPOINT = "currentconditions";
 	private static final String API_VERSION = "v1";
 	private static final String API_KEY = ApplicationGlobalState.getInstance().getApiKey();
+	private static final String FORECAST_PERIOD = "5day";
+	private static final String FORECAST_TYPE = "daily";
+	private static final String FORECAST = "forecasts";
+	private static final ObjectMapper responseMapper = new ObjectMapper();
 
 	private final OkHttpClient client = new OkHttpClient();
 	private final ObjectMapper objectMapper = new ObjectMapper();
 
+	private DatabaseRepository repository = new DatabaseRepositorySQLiteImpl();
+
 	@Override
-	public void getWeather(Periods periods) throws IOException {
-		String cityKey = detectCityKey();
+	public void getWeather(Periods periods) throws IOException, SQLException {
+
 		if (periods.equals(Periods.NOW)) {
+			String cityKey = detectCityKey();
 			HttpUrl url = new HttpUrl.Builder()
 					.scheme("http")
 					.host(BASE_HOST)
@@ -47,33 +53,22 @@ public class AccuWeatherProvider implements WeatherProvider {
 					.url(url)
 					.build();
 
-			Response response = client.newCall(request).execute();
+			String responseList = client.newCall(request).execute().body().string();
 
-			String res = response.body().string();
-			System.out.println(res);
-			JsonNode wth = objectMapper.readTree(res).get(0).at("/WeatherText");
-			JsonNode wthdate = objectMapper.readTree(res).get(0).at("/LocalObservationDateTime");
-			String wthdateStr = wthdate.asText();
-			JsonNode wthtemprMin = objectMapper.readTree(res).get(0).at("/Temperature/Metric/Value");
+			List<WeatherResponse> weatherResponseList = responseMapper.readValue(responseList, new TypeReference<List<WeatherResponse>>() {});
 
+			WeatherResponse weather = weatherResponseList.get(0);
 
-
-			System.out.println("Погода в "+ApplicationGlobalState.getInstance().getSelectedCity());
-			System.out.println("На дату "+ wthdateStr.substring(0,10));
-			System.out.println(wth);
-			System.out.println("Температура :  "+wthtemprMin);
-
-
-			//System.out.println(response.body().string());
-			// TODO: Сделать в рамках д/з вывод более приятным для пользователя.
-			//  Создать класс WeatherResponse, десериализовать ответ сервера в экземпляр класса
-			//  Вывести пользователю только текущую температуру в C и сообщение (weather text)
+			System.out.println("Сейчас в городе " + ApplicationGlobalState.getInstance().getSelectedCity() +
+					" температура "  + weather.getTemperature().getMetric().getValue() + "°С, и " + weather.getWeatherText() + ".");
 		}
+
 		if (periods.equals(Periods.FIVE_DAYS)) {
-			HttpUrl url5 = new HttpUrl.Builder()
+			String cityKey = detectCityKey();
+			HttpUrl url = new HttpUrl.Builder()
 					.scheme("http")
 					.host(BASE_HOST)
-					.addPathSegment(FORECAST_ENDPOINT)
+					.addPathSegment(FORECAST)
 					.addPathSegment(API_VERSION)
 					.addPathSegment(FORECAST_TYPE)
 					.addPathSegment(FORECAST_PERIOD)
@@ -83,35 +78,60 @@ public class AccuWeatherProvider implements WeatherProvider {
 					.addQueryParameter("metric", "true")
 					.build();
 
-			Request request5 = new Request.Builder()
+			Request request = new Request.Builder()
 					.addHeader("accept", "application/json")
-					.url(url5)
+					.url(url)
 					.build();
 
-			Response response5 = client.newCall(request5).execute();
+			String responseList = client.newCall(request).execute().body().string();
 
-			String res5 = response5.body().string();
-			System.out.println(res5);
-			String[] date = new String[5];
-			for (int i=0; i < 5; i++) {
-				String[] date5 = objectMapper.readTree(res5).at("/DailyForecasts/"+ i + "/Date").asText().split("T");
-				JsonNode tempMin = objectMapper.readTree(res5).at("/DailyForecasts/"+ i + "/Temperature/Minimum/Value");
-				JsonNode tempMax = objectMapper.readTree(res5).at("/DailyForecasts/"+ i + "/Temperature/Maximum/Value");
-				JsonNode citywth = objectMapper.readTree(res5).at("/DailyForecasts/"+ i + "/Day/IconPhrase");
+			int firstIndexBody = responseList.indexOf("[{\"Date\"");
+			int lastIndexBody = responseList.lastIndexOf("}");
+			responseList = responseList.substring(firstIndexBody, lastIndexBody);
 
-				date[i] = date5[0] + "  Tmin:" + tempMin + "  Tmax:" + tempMax + "  Weather:" + citywth;
+			List<WeatherResponse> weatherResponseList = responseMapper.readValue(responseList, new TypeReference<List<WeatherResponse>>() {});
 
+			for (WeatherResponse weather: weatherResponseList) {
+				System.out.println("В городе " + ApplicationGlobalState.getInstance().getSelectedCity() + " на следующую дату " + weather.getDate().substring(0,10) +
+						" ожидается такая погода: Минимальная температура "  + weather.getTemperature().getMinimum().getValue() + "°С. Максимальная температура " +
+						weather.getTemperature().getMaximum().getValue() + "°С. Днём - " + weather.getDay().getIconPhrase() + ". Ночью - " + weather.getNight().getIconPhrase() + ".");
+
+				WeatherData weatherData = new WeatherData(ApplicationGlobalState.getInstance().getSelectedCity(),
+						weather.getDate().substring(0,10), weather.getDay().getIconPhrase(), weather.getNight().getIconPhrase(),
+						castFloatToDouble(weather.getTemperature().getMinimum().getValue()),  castFloatToDouble(weather.getTemperature().getMaximum().getValue())
+				);
+
+				repository.saveWeatherData(weatherData);
 			}
-
-			System.out.println("Погода в "+ApplicationGlobalState.getInstance().getSelectedCity());
-			for (int i=0; i < 5; i++) {
-				System.out.println(date[i]);
-			}
-
 		}
 
+		if (periods.equals(Periods.BASE)) {
+			getAllFromDb();
+		}
 
+		if (periods.equals(Periods.ZERO)) {
+			exitApp();
+		}
+	}
 
+	private void exitApp() {
+		System.out.println("Завершаю работу");
+		repository.closeConnection();
+		System.exit(0);
+	}
+
+	private Double castFloatToDouble(float value) {
+
+		return (double) value;
+	}
+
+	@Override
+	public List<WeatherData> getAllFromDb() throws SQLException, IOException {
+		List<WeatherData> weatherDataList = repository.getAllSavedData();
+		for (WeatherData weatherData : weatherDataList) {
+			System.out.println(weatherData);
+		}
+		return weatherDataList;
 	}
 
 	public String detectCityKey() throws IOException {
@@ -151,4 +171,9 @@ public class AccuWeatherProvider implements WeatherProvider {
 		return objectMapper.readTree(jsonResponse).get(0).at("/Key").asText();
 	}
 
+	public String trimBrackets(JsonNode string){
+		int lastIndexBody = string.toString().lastIndexOf("\"");
+		String newString = string.toString().substring(1, lastIndexBody);
+		return newString;
+	}
 }
